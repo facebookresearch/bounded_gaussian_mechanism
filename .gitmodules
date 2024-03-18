@@ -1,0 +1,6 @@
+[submodule "dp/tan"]
+	path = dp/tan
+	url = git@github.com:facebookresearch/tan.git
+[submodule "fil/bounding_data_reconstruction"]
+	path = fil/bounding_data_reconstruction
+	url = git@github.com:facebookresearch/bounding_data_reconstruction.git

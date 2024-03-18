@@ -1,0 +1,26 @@
+diff --git a/dp/.DS_Store b/dp/.DS_Store
+index 4e0f08f..239469d 100644
+Binary files a/dp/.DS_Store and b/dp/.DS_Store differ
+Submodule dp/tan contains modified content
+diff --git a/dp/tan/src/models/NFnet.py b/dp/tan/src/models/NFnet.py
+index c4e02ce..6493bf7 100644
+--- a/dp/tan/src/models/NFnet.py
++++ b/dp/tan/src/models/NFnet.py
+@@ -24,7 +24,7 @@ import timm
+ from timm.models.fx_features import register_notrace_module
+ from timm.models.layers import make_divisible, DropPath
+ from timm.models.nfnet import DownsampleAvg
+-from timm.models.layers.padding import get_padding,  get_padding_value, pad_same
++from timm.layers.padding import get_padding,  get_padding_value, pad_same
+ import torch.nn.functional as F
+ 
+ 
+@@ -190,7 +190,7 @@ def compute_wsconv_grad_sample(layer: MyScaledStdConv2dSame,activations: torch.T
+ 
+     return ret
+ 
+-timm.models.layers.std_conv.ScaledStdConv2d = MyScaledStdConv2d
++timm.layers.std_conv.ScaledStdConv2d = MyScaledStdConv2d
+ 
+ 
+ class Expand(nn.Module):

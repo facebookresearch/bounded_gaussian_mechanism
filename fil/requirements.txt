@@ -1,0 +1,7 @@
+numpy
+opacus==1.1.2
+timm
+torch
+torchvision
+hydra
+tensorflow-privacy

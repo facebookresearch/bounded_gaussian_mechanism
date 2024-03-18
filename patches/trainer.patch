@@ -1,0 +1,128 @@
+Submodule fil/bounding_data_reconstruction contains modified content
+diff --git a/fil/bounding_data_reconstruction/trainer.py b/fil/bounding_data_reconstruction/trainer.py
+index bcd1d0f..94dc1ef 100644
+--- a/fil/bounding_data_reconstruction/trainer.py
++++ b/fil/bounding_data_reconstruction/trainer.py
+@@ -11,6 +11,11 @@ import jax.random as jnr
+ from jax import jit, grad, vmap, nn
+ from jax.tree_util import tree_flatten, tree_unflatten
+ import math
++import jax
++
++import sys
++sys.path.append("..")
++from compressor_jax import *
+ 
+ 
+ def get_loss_func(predict):
+@@ -18,13 +23,14 @@ def get_loss_func(predict):
+     Returns the loss function for the specified `predict`ion function.
+     """
+ 
+-    @jit
++    # @jit
+     def loss(params, inputs, targets):
+         """
+         Multi-class loss entropy loss function for model with parameters `params`
+         and the specified `inputs` and one-hot `targets`.
+         """
+         predictions = nn.log_softmax(predict(params, inputs))
++        print(inputs.shape, predictions.shape, targets.shape)
+         if predictions.ndim == 1:
+             return -jnp.sum(predictions * targets)
+         return -jnp.mean(jnp.sum(predictions * targets, axis=-1))
+@@ -32,7 +38,7 @@ def get_loss_func(predict):
+     return loss
+ 
+ 
+-def get_grad_func(loss, norm_clip=0, soft_clip=False):
++def get_grad_func(loss, norm_clip=0, soft_clip=False, linf_clip=False, linf_norm_clip=0):
+     
+     @jit
+     def clipped_grad(params, inputs, targets):
+@@ -41,19 +47,34 @@ def get_grad_func(loss, norm_clip=0, soft_clip=False):
+             return grads
+         else:
+             nonempty_grads, tree_def = tree_flatten(grads)
+-            total_grad_norm = jnp.add(jnp.linalg.norm(
+-                [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads]), 1e-7)
++            total_grad_norm = jnp.sum(jnp.array([
++                jnp.linalg.norm(neg.ravel())**2 for neg in nonempty_grads]))**0.5
++            if linf_clip:
++                normalized_nonempty_grads = [jnp.clip(g, a_min=-linf_norm_clip,a_max=linf_norm_clip) for g in nonempty_grads]
++                return tree_unflatten(tree_def, normalized_nonempty_grads)
++            
+             if soft_clip:
+                 divisor = nn.gelu(total_grad_norm / norm_clip - 1) + 1
+             else:
+                 divisor = jnp.maximum(total_grad_norm / norm_clip, 1.)
++            # print(total_grad_norm.shape)
+             normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
+             return tree_unflatten(tree_def, normalized_nonempty_grads)
+     
+     return clipped_grad
+ 
+ 
+-def get_update_func(get_params, grad_func, opt_update, norm_clip=0, reshape=True):
++def get_update_func(get_params, 
++                    grad_func, 
++                    opt_update, 
++                    norm_clip=0, 
++                    reshape=True,
++                    rectification=False,
++                    quantization=False,
++                    truncation=False,
++                    lb=-1.,
++                    ub=1.,
++                    num_of_bits=1):
+     """
+     Returns the parameter update function for the specified `predict`ion function.
+     """
+@@ -78,20 +99,39 @@ def get_update_func(get_params, grad_func, opt_update, norm_clip=0, reshape=True
+         grads_flat, grads_treedef = tree_flatten(grads)
+         grads_flat = [g.sum(0) for g in grads_flat]
+         rngs = jnr.split(rng, len(grads_flat))
+-        noisy_grads = [
+-            (g + multiplier * sigma * jnr.normal(r, g.shape)) / len(targets)
+-            for r, g in zip(rngs, grads_flat)
+-        ]
++        bounds = [lb, ub]
++        if truncation:
++            noisy_grads = [
++                truncate(bounds, r, g, sigma * multiplier) / len(targets)
++                for r, g in zip(rngs, grads_flat)
++            ]
++        else:
++            noisy_grads = [
++                (g + multiplier * sigma * jnr.normal(r, g.shape)) / len(targets)
++                for r, g in zip(rngs, grads_flat)
++            ]
++            if rectification:
++                if quantization:
++                    alphabets = generate_alphabets_evenly(bounds, num_of_bits)
++                    noisy_grads = [
++                        quantize(alphabets, g)
++                        for g in noisy_grads
++                    ]
++                else:
++                    noisy_grads = [
++                        rectify(bounds, g)
++                        for g in noisy_grads
++                    ]
+         
+         # weight decay
+         params_flat, _ = tree_flatten(params)
+-        noisy_grads = [
++        noisy_grads_unflatten = [
+             g + weight_decay * param
+             for g, param in zip(noisy_grads, params_flat)
+         ]
+-        noisy_grads = tree_unflatten(grads_treedef, noisy_grads)
++        noisy_grads = tree_unflatten(grads_treedef, noisy_grads_unflatten)
+ 
+         # perform parameter update:
+-        return opt_update(i, noisy_grads, opt_state)
++        return opt_update(i, noisy_grads, opt_state), noisy_grads_unflatten
+ 
+     return update
+\ No newline at end of file

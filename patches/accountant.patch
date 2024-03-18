@@ -1,0 +1,133 @@
+Submodule fil/bounding_data_reconstruction contains modified content
+diff --git a/fil/bounding_data_reconstruction/accountant.py b/fil/bounding_data_reconstruction/accountant.py
+index acba713..055a5bc 100644
+--- a/fil/bounding_data_reconstruction/accountant.py
++++ b/fil/bounding_data_reconstruction/accountant.py
+@@ -5,15 +5,20 @@
+ #
+ # This source code is licensed under the license found in the
+ # LICENSE file in the root directory of this source tree.
++import numpy as np
+ 
++import jax
+ import jax.numpy as jnp
+ import jax.random as jnr
+ 
+ from jax import jit, jvp, vjp, jacrev, vmap, nn
+ from jax.tree_util import tree_flatten
+ import trainer
+-from tensorflow_privacy.privacy.analysis.rdp_accountant import compute_rdp, get_privacy_spent
+ 
++import sys
++sys.path.append("..")
++from compressor_jax import *
++import jax.scipy.stats.norm as jnorm
+ 
+ def get_grad_jacobian_norm_func(grad_func, get_params, method="jvp", reshape=True, label_privacy=False):
+     """
+@@ -126,7 +131,17 @@ def get_grad_jacobian_norm_func(grad_func, get_params, method="jvp", reshape=Tru
+     return grad_jacobian_norm
+ 
+ 
+-def get_grad_jacobian_trace_func(grad_func, get_params, reshape=True, label_privacy=False):
++def get_grad_jacobian_trace_func(grad_func, 
++                                 get_params, 
++                                 reshape=True, 
++                                 label_privacy=False,
++                                 rectification=False,
++                                 quantization=False,
++                                 truncation=False,
++                                 lb=-1.,
++                                 ub=1.,
++                                 num_of_bits=1,
++                                 sigma=1.):
+     """
+     Returns a function that computes the (square root of the) trace of the Jacobian
+     of the parameters.
+@@ -150,6 +165,32 @@ def get_grad_jacobian_trace_func(grad_func, get_params, reshape=True, label_priv
+             perex_grad = lambda x: vmap(grad_func, in_axes=(None, 0, 0))(
+                 params, x, targets
+             )
++
++        #### calculate fisher
++        grads = vmap(grad_func, in_axes=(None, 0, 0))(params, inputs, targets)
++        grads_flat, grads_treedef = tree_flatten(grads)
++        grads_flat = [g.sum(0) for g in grads_flat]
++
++        bounds = [lb,ub]
++
++        if truncation:
++            fisher = [
++                calculate_truncation(bounds,v,sigma)
++                for v in grads_flat
++            ]
++        elif rectification:
++            if quantization:
++                alphabets = generate_alphabets_evenly(bounds, num_of_bits)
++                fisher = [
++                    calculate_quantization(alphabets,v,sigma)
++                    for v in grads_flat
++                ]
++            else:
++                fisher = [
++                    calculate_rectification(bounds,v,sigma)
++                    for v in grads_flat
++                ]
++
+         
+         num_iters = targets.shape[1] if label_privacy else num_iters
+         rngs = jnr.split(rng, num_iters)
+@@ -166,10 +207,24 @@ def get_grad_jacobian_trace_func(grad_func, get_params, reshape=True, label_priv
+                 _, w = jvp(perex_grad, (inputs,), (w,))
+             # compute norm of the JVP:
+             w_flattened, _ = tree_flatten(w)
+-            norms = [
+-                jnp.power(jnp.reshape(v, (v.shape[0], -1)), 2).sum(axis=1)
+-                for v in w_flattened
+-            ]
++            
++            if truncation or rectification:
++                # if jnp.array([(f > sigma ** 2).sum() for f in fisher]).sum() > 0:
++                #     print("Warning: Fisher information is not amplified. Incorrect computation might happen.")
++                norms = [
++                    (jnp.power(jnp.reshape(v, (v.shape[0], -1)), 2) * jnp.repeat(jnp.reshape(f,(1,-1)), v.shape[0],axis=0)).sum(axis=1)
++                    for v,f in zip(w_flattened,fisher)
++                ]
++
++                g_norms = [
++                    jnp.power(jnp.reshape(v, (v.shape[0], -1)), 2).sum(axis=1)
++                    for v,f in zip(w_flattened,fisher)
++                ]
++            else:
++                norms = [
++                    jnp.power(jnp.reshape(v, (v.shape[0], -1)), 2).sum(axis=1)
++                    for v in w_flattened
++                ]
+             trace = trace + sum(norms) / num_iters
+         
+         # set nan values to 0 because gradient is 0
+@@ -179,23 +234,3 @@ def get_grad_jacobian_trace_func(grad_func, get_params, reshape=True, label_priv
+     # return the function:
+     return grad_jacobian_trace
+ 
+-
+-def get_dp_accounting_func(batch_size, sigma):
+-    """
+-    Returns the (eps, delta)-DP accountant if alpha=None,
+-    or the (alpha, eps)-RDP accountant otherwise.
+-    """
+-    
+-    def compute_epsilon(steps, num_examples, target_delta=1e-5, alpha=None):
+-        if num_examples * target_delta > 1.:
+-            warnings.warn('Your delta might be too high.')
+-        q = batch_size / float(num_examples)
+-        if alpha is None:
+-            orders = list(jnp.linspace(1.1, 10.9, 99)) + list(range(11, 64))
+-            rdp_const = compute_rdp(q, sigma, steps, orders)
+-            eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
+-        else:
+-            eps = compute_rdp(q, sigma, steps, alpha)
+-        return eps
+-    
+-    return compute_epsilon
+\ No newline at end of file

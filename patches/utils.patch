@@ -1,0 +1,14 @@
+Submodule fil/bounding_data_reconstruction contains modified content
+diff --git a/fil/bounding_data_reconstruction/utils.py b/fil/bounding_data_reconstruction/utils.py
+index 652ed70..6ea62df 100644
+--- a/fil/bounding_data_reconstruction/utils.py
++++ b/fil/bounding_data_reconstruction/utils.py
+@@ -137,7 +137,7 @@ def get_model(rng, model_name, input_shape, num_labels):
+         init_random_params, predict_raw = stax.Dense(num_labels)
+         def predict(params, inputs):
+             logits = predict_raw(params, inputs)
+-            return jnp.hstack([logits, jnp.zeros(logits.shape)])
++            return logits
+         _, init_params = init_random_params(rng, input_shape)
+ 
+     else:

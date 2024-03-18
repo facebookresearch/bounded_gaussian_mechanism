@@ -1,0 +1,46 @@
+Submodule fil/bounding_data_reconstruction contains modified content
+diff --git a/fil/bounding_data_reconstruction/datasets.py b/fil/bounding_data_reconstruction/datasets.py
+index 52182c7..3004c0a 100644
+--- a/fil/bounding_data_reconstruction/datasets.py
++++ b/fil/bounding_data_reconstruction/datasets.py
+@@ -181,6 +181,33 @@ def cifar(dataset="cifar10", binary=False, permute_train=False, normalize=False,
+     return preprocess_data(train_images, train_labels, test_images, test_labels,
+                            binary, permute_train, normalize, pca_dims)
+ 
++def cifar_extractor(extracted_path):
++    extracted_train_path_part_1 = extracted_path + "/part1_train.npy"
++    extracted_train_path_part_2 = extracted_path + "/part2_train.npy"
++    labels_train_path = extracted_path + "/_train_labels.npy"
++    extracted_test_path = extracted_path + "/_test.npy"
++    labels_test_path = extracted_path + "/_test_labels.npy"
++    x_train_part_1 = np.load(extracted_train_path_part_1)
++    x_train_part_2 = np.load(extracted_train_path_part_2)
++    x_train = np.concatenate((x_train_part_1, x_train_part_2), axis=0)
++    x_test = np.load(extracted_test_path)
++    labels_train = np.load(labels_train_path)
++    labels_test = np.load(labels_test_path)
++    return preprocess_data(x_train, labels_train, x_test, labels_test,
++                           binary=False, permute_train=False, normalize=False, pca_dims=0)
++
++def cifar100_extractor(extracted_path):
++    extracted_train_path = extracted_path + "/_train.npy"
++    labels_train_path = extracted_path + "/_train_labels.npy"
++    extracted_test_path = extracted_path + "/_test.npy"
++    labels_test_path = extracted_path + "/_test_labels.npy"
++    x_train= np.load(extracted_train_path)
++    x_test = np.load(extracted_test_path)
++    labels_train = np.load(labels_train_path)
++    labels_test = np.load(labels_test_path)
++    return preprocess_data(x_train, labels_train, x_test, labels_test,
++                           binary=False, permute_train=False, normalize=False, pca_dims=0)
++
+ 
+ def get_datastream(images, labels, batch_size, permutation=False, last_batch=True):
+     """
+@@ -219,4 +246,4 @@ def get_datastream(images, labels, batch_size, permutation=False, last_batch=Tru
+     else:
+         num_complete_batches, leftover = divmod(num_images, batch_size)
+         num_batches = num_complete_batches + (last_batch and bool(leftover))
+-        return permutation_datastream, num_batches
++        return permutation_datastream, num_batches
+\ No newline at end of file

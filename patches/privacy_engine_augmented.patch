@@ -1,0 +1,114 @@
+Submodule dp/tan contains modified content
+diff --git a/dp/tan/src/opacus_augmented/privacy_engine_augmented.py b/dp/tan/src/opacus_augmented/privacy_engine_augmented.py
+index 0488ed7..d64ffec 100644
+--- a/dp/tan/src/opacus_augmented/privacy_engine_augmented.py
++++ b/dp/tan/src/opacus_augmented/privacy_engine_augmented.py
+@@ -15,14 +15,43 @@ from opacus.data_loader import DPDataLoader, switch_generator
+ from opacus.distributed import DifferentiallyPrivateDistributedDataParallel as DPDDP
+ #from opacus.grad_sample.grad_sample_module import GradSampleModule
+ from src.opacus_augmented.grad_sample_module_augmented import GradSampleModuleAugmented
++import sys
++sys.path.append('..')
++sys.path.append('../utils')
++
++from utils.bounded_noise_optimizer import BoundedNoiseDPOptimizer, BoundedNoiseDistributedDPOptimizer
+ from opacus.optimizers import DPOptimizer, get_optimizer_class
+-from opacus.scheduler import _NoiseScheduler
++from opacus.schedulers import _NoiseScheduler
+ from src.utils.utils import trainable_parameters
+ from opacus.validators.module_validator import ModuleValidator
+ from torch import nn, optim
+ from torch.nn.parallel import DistributedDataParallel as DDP
+ from torch.utils.data import DataLoader
+ 
++class WarmupSchedule(optim.lr_scheduler._LRScheduler):
++    def __init__(self, optimizer, warmup_step, warmup_factor, lr, last_epoch=-1):
++        self.warmup_step = warmup_step
++        self.warmup_factor = warmup_factor
++        self.lr = lr
++        super(WarmupSchedule, self).__init__(optimizer, last_epoch)
++
++    def get_lr(self):
++        if self.last_epoch < self.warmup_step:
++            return [self.lr for _ in self.base_lrs]
++        return [base_lr * self.warmup_factor for base_lr in self.base_lrs]
++
++class CooldownSchedule(optim.lr_scheduler._LRScheduler):
++    def __init__(self, optimizer, decay_step, decay_factor, lr, last_epoch=-1):
++        self.decay_step = decay_step
++        self.decay_factor = decay_factor
++        self.lr = lr
++        super(CooldownSchedule, self).__init__(optimizer, last_epoch)
++
++    def get_lr(self):
++        if self.last_epoch < self.decay_step:
++            return [self.lr for _ in self.base_lrs]
++        return [base_lr / self.decay_factor for base_lr in self.base_lrs]
++
+ 
+ def forbid_accumulation_hook(
+     module: GradSampleModuleAugmented, _grad_input: torch.Tensor, _grad_output: torch.Tensor
+@@ -92,7 +121,16 @@ class PrivacyEngineAugmented:
+         >>> # continue training as normal
+     """
+ 
+-    def __init__(self,GRAD_SAMPLERS, *, accountant: str = "rdp", secure_mode: bool = False):
++    def __init__(
++        self,
++        GRAD_SAMPLERS, 
++        *, 
++        accountant: str = "rdp", 
++        secure_mode: bool = False,
++        rectification: bool = False,
++        truncation: bool = False,
++        bound: float = 1.,
++    ):
+         """
+ 
+         Args:
+@@ -111,6 +149,10 @@ class PrivacyEngineAugmented:
+         self.GRAD_SAMPLERS=GRAD_SAMPLERS
+         self.accountant = create_accountant(mechanism=accountant)
+         self.secure_mode = secure_mode
++        self.rectification = rectification
++        self.truncation = truncation
++        self.bound = bound
++
+         self.secure_rng = None
+         self.dataset = None  # only used to detect switching to a different dataset
+         if self.secure_mode:
+@@ -152,6 +194,25 @@ class PrivacyEngineAugmented:
+         elif noise_generator is not None:
+             generator = noise_generator
+ 
++        # if self.truncation or self.rectification:
++        if distributed:
++            return BoundedNoiseDistributedDPOptimizer(
++                optimizer=optimizer,
++                noise_multiplier=noise_multiplier,
++                max_grad_norm=max_grad_norm,
++                expected_batch_size=expected_batch_size,
++                loss_reduction=loss_reduction,
++                generator=generator,
++                secure_mode=self.secure_mode,
++                rectification=self.rectification,
++                truncation=self.truncation,
++                bound=self.bound,
++            )
++        else:
++            raise ValueError(
++                "Bounded Noise Optimizer is not implemented without distributed training."
++            )
++
+         optim_class = get_optimizer_class(clipping=clipping, distributed=distributed)
+ 
+         return optim_class(
+@@ -407,7 +468,7 @@ class PrivacyEngineAugmented:
+         )
+ 
+         optimizer.attach_step_hook(
+-            self.accountant.get_optimizer_hook_fn(sample_rate=sample_rate)
++            self.accountant.get_optimizer_hook_fn(sample_rate=1)
+         )
+ 
+         return module, optimizer, data_loader
